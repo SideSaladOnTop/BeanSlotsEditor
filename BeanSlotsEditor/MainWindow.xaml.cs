@@ -24,6 +24,10 @@ public partial class MainWindow : Window
         public string Name { get; set; } = "";
         public string Shortname { get; set; } = "";
         public string IconUrl { get; set; } = "";
+        public string LegendaryId { get; set; } = "";
+        public string BaseShortname { get; set; } = "";
+        public string Category { get; set; } = "Uncategorized";
+        public string Skin { get; set; } = "0";
         private ImageSource? icon;
         public ImageSource? Icon { get => icon; set { icon = value; PropertyChanged?.Invoke(this, new(nameof(Icon))); } }
         public event PropertyChangedEventHandler? PropertyChanged;
@@ -35,6 +39,8 @@ public partial class MainWindow : Window
         public int Amount { get => amount; set { amount = value; Changed(nameof(Amount)); } }
         public double Chance { get => chance; set { chance = value; Changed(nameof(Chance)); } }
         public string Skin { get => skin; set { skin = value; Changed(nameof(Skin)); } }
+        private string legendaryId = "";
+        public string LegendaryId { get => legendaryId; set { legendaryId = value; Changed(nameof(LegendaryId)); } }
         private string displayName = "";
         public string DisplayName { get => displayName; set { displayName = value; Changed(nameof(DisplayName)); } }
         private ImageSource? icon;
@@ -44,7 +50,11 @@ public partial class MainWindow : Window
     }
     private readonly ObservableCollection<Prize> prizes = new();
     private readonly ObservableCollection<RustItem> items = new();
+    private readonly Dictionary<string, RustItem> legendaryCatalog = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, RustItem> catalog = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> categoryAssignments = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> categoryNames = new();
+    private const string AllCategories = "All Categories";
     private static readonly HttpClient http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private static readonly string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BeanSlotsEditor", "RustHelp");
     private static readonly string catalogFile = Path.Combine(cacheDir, "items.json");
@@ -63,13 +73,51 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        foreach (var raw in itemSeed) { var a = raw.Split('|'); if (a.Length == 2) items.Add(new RustItem { Shortname = a[0], Name = a[1] }); }
+        LoadCategories();
+        foreach (var raw in itemSeed) { var a = raw.Split('|'); if (a.Length == 2) items.Add(new RustItem { Shortname = a[0], Name = a[1], Category = CategoryFor(a[0], "Uncategorized") }); }
         ItemsGrid.ItemsSource = CollectionViewSource.GetDefaultView(items);
         PrizesGrid.ItemsSource = CollectionViewSource.GetDefaultView(prizes);
         prizes.CollectionChanged += (_, _) => { if (!loading) dirty = true; RefreshFilters(); UpdateOdds(); };
         NewDefaults();
         _ = InitializeRustHelpAsync();
     }
+    private void LoadCategories()
+    {
+        categoryNames.Clear();
+        categoryAssignments.Clear();
+        categoryNames.Add(AllCategories);
+        try
+        {
+            string file = Path.Combine(AppContext.BaseDirectory, "categories.json");
+            if (File.Exists(file) && JsonNode.Parse(File.ReadAllText(file)) is JsonObject data)
+            {
+                if (data["Categories"] is JsonArray categories)
+                    foreach (var entry in categories)
+                    {
+                        string category = S(entry).Trim();
+                        if (category.Length > 0 && !categoryNames.Contains(category, StringComparer.OrdinalIgnoreCase)) categoryNames.Add(category);
+                    }
+                if (data["Assignments"] is JsonObject assignments)
+                    foreach (var entry in assignments)
+                        if (entry.Value != null) categoryAssignments[entry.Key] = S(entry.Value);
+            }
+        }
+        catch (Exception ex) { MessageBox.Show("Could not load categories.json: " + ex.Message, "Categories", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        // Always include these choices, even when using an older categories.json.
+        foreach (var required in new[] { "Legendary Weapons", "Legendary Clothing", "Legendary Backpacks", "Uncategorized" })
+            if (!categoryNames.Contains(required, StringComparer.OrdinalIgnoreCase)) categoryNames.Add(required);
+        CategoryFilter.ItemsSource = categoryNames;
+        CategoryFilter.SelectedIndex = 0;
+    }
+
+    private string CategoryFor(string shortname, string fallback)
+    {
+        if (categoryAssignments.TryGetValue(shortname, out var assigned) && !string.IsNullOrWhiteSpace(assigned)) return assigned;
+        return string.IsNullOrWhiteSpace(fallback) ? "Uncategorized" : fallback;
+    }
+
+    private void CategoryFilter_Changed(object sender, SelectionChangedEventArgs e) => RefreshFilters();
+
     private static string S(JsonNode? n, string fallback = "") => n?.ToString() ?? fallback;
     private static JsonObject Obj(JsonObject parent, string key) { if (parent[key] is not JsonObject o) { o = new JsonObject(); parent[key] = o; } return o; }
     private void NewDefaults()
@@ -88,7 +136,7 @@ public partial class MainWindow : Window
     {
         p.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(Prize.Shortname)) AttachPrizeIcon(p);
+            if (e.PropertyName == nameof(Prize.Shortname) || e.PropertyName == nameof(Prize.LegendaryId)) AttachPrizeIcon(p);
             if (!loading) dirty = true;
             UpdateOdds();
         };
@@ -119,7 +167,9 @@ public partial class MainWindow : Window
             foreach(var p in prizes)
             {
                 if (string.IsNullOrWhiteSpace(p.Shortname) || p.Amount < 1 || p.Chance < 0 || p.Chance > 100 || double.IsNaN(p.Chance) || !ulong.TryParse(p.Skin, out var skin)) throw new Exception("Invalid prize: " + p.Shortname + ". Amount >= 1, chance 0–100, skin unsigned integer.");
-                var entry = new JsonObject { ["Shortname"] = p.Shortname.Trim(), ["Amount"] = p.Amount, ["Chance"] = p.Chance, ["Skin"] = skin }; list.Add(entry);
+                var entry = new JsonObject { ["Shortname"] = p.Shortname.Trim(), ["Amount"] = p.Amount, ["Chance"] = p.Chance, ["Skin"] = skin };
+                if (!string.IsNullOrWhiteSpace(p.LegendaryId)) entry["LegendaryId"] = p.LegendaryId.Trim();
+                list.Add(entry);
             }
             if (prizes.Sum(p=>p.Chance) > 100.000001) throw new Exception("Prize probabilities total over 100%. Reduce some chances to save.");
             root["Prizes"] = list;
@@ -132,7 +182,7 @@ public partial class MainWindow : Window
         var parsed = JsonNode.Parse(File.ReadAllText(file)) as JsonObject ?? throw new Exception("Expected JSON object at root.");
         loading = true; root = parsed; prizes.Clear();
         if(root["Prizes"] is JsonArray arr) foreach(var obj in arr.OfType<JsonObject>())
-        { AddPrize(new Prize { Shortname = S(obj["Shortname"]), Amount = int.TryParse(S(obj["Amount"]), out var amt) ? amt:1, Chance = double.TryParse(S(obj["Chance"]), NumberStyles.Float,CultureInfo.InvariantCulture,out var c)?c:0, Skin=S(obj["Skin"],"0") }); }
+        { AddPrize(new Prize { Shortname = S(obj["Shortname"]), Amount = int.TryParse(S(obj["Amount"]), out var amt) ? amt:1, Chance = double.TryParse(S(obj["Chance"]), NumberStyles.Float,CultureInfo.InvariantCulture,out var c)?c:0, Skin=S(obj["Skin"],"0"), LegendaryId=S(obj["LegendaryId"]) }); }
         LoadFields(); path=file; PathLabel.Text=Path.GetFileName(file); dirty=false; loading=false; UpdateOdds(); StatusLabel.Text=$"Loaded {prizes.Count} prizes";
     }
     private bool Save(string? destination)
@@ -153,7 +203,8 @@ public partial class MainWindow : Window
     {
         if(ItemsGrid==null || PrizesGrid==null)return;
         var search=ItemSearch?.Text?.Trim()??""; var ps=PrizeSearch?.Text?.Trim()??"";
-        var all=CollectionViewSource.GetDefaultView(items); all.Filter=o => o is RustItem i && (i.Name.Contains(search,StringComparison.OrdinalIgnoreCase)||i.Shortname.Contains(search,StringComparison.OrdinalIgnoreCase)) && (HideSelected?.IsChecked!=true || !prizes.Any(p=>p.Shortname==i.Shortname)); all.Refresh();
+        var category = CategoryFilter?.SelectedItem as string ?? AllCategories;
+        var all=CollectionViewSource.GetDefaultView(items); all.Filter=o => o is RustItem i && (category == AllCategories || string.Equals(i.Category, category, StringComparison.OrdinalIgnoreCase)) && (i.Name.Contains(search,StringComparison.OrdinalIgnoreCase)||i.Shortname.Contains(search,StringComparison.OrdinalIgnoreCase)) && (HideSelected?.IsChecked!=true || !prizes.Any(p=>!string.IsNullOrEmpty(i.LegendaryId) ? p.LegendaryId==i.LegendaryId : string.IsNullOrEmpty(p.LegendaryId) && p.Shortname==i.Shortname)); all.Refresh();
         var selected=CollectionViewSource.GetDefaultView(prizes); selected.Filter=o=>o is Prize p && (p.Shortname.Contains(ps,StringComparison.OrdinalIgnoreCase) || p.DisplayName.Contains(ps,StringComparison.OrdinalIgnoreCase)); selected.Refresh();
     }
     private void ItemSearch_Changed(object sender,RoutedEventArgs e)=>RefreshFilters();
@@ -161,11 +212,11 @@ public partial class MainWindow : Window
     private void Add_Click(object sender,RoutedEventArgs e)
     {
         var chosen=ItemsGrid.SelectedItems.Cast<RustItem>().ToList();
-        foreach(var item in chosen)if(!prizes.Any(p=>p.Shortname==item.Shortname)) AddPrize(new Prize { Shortname=item.Shortname,Amount=1,Chance=0,Skin="0" });
+        foreach(var item in chosen)if(!prizes.Any(p => !string.IsNullOrEmpty(item.LegendaryId) ? p.LegendaryId==item.LegendaryId : string.IsNullOrEmpty(p.LegendaryId) && p.Shortname==item.Shortname)) AddPrize(new Prize { Shortname=string.IsNullOrEmpty(item.LegendaryId)?item.Shortname:item.BaseShortname, LegendaryId=item.LegendaryId, Amount=1,Chance=0,Skin=item.Skin });
         RefreshFilters(); UpdateOdds();
     }
     private void Remove_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList()) prizes.Remove(p); }
-    private void Duplicate_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList())AddPrize(new Prize { Shortname=p.Shortname,Amount=p.Amount,Chance=p.Chance,Skin=p.Skin }); }
+    private void Duplicate_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList())AddPrize(new Prize { Shortname=p.Shortname,Amount=p.Amount,Chance=p.Chance,Skin=p.Skin, LegendaryId=p.LegendaryId }); }
     private void Batch_Click(object sender,RoutedEventArgs e)
     {
         var chosen=PrizesGrid.SelectedItems.Cast<Prize>().ToList(); if(chosen.Count==0) { MessageBox.Show("Select prize rows first.");return; }
@@ -215,7 +266,7 @@ public partial class MainWindow : Window
                 {
                     string shortname=S(obj["shortname"]??obj["Shortname"]??obj["shortName"]);
                     string name=S(obj["displayName"]??obj["DisplayName"]??obj["name"]??obj["Name"],shortname);
-                    if(!string.IsNullOrWhiteSpace(shortname) && !shortname.Contains(' ') && shortname.Length<100)found[shortname]=new RustItem{Shortname=shortname,Name=name,IconUrl=S(obj["iconUrl"]??obj["IconUrl"]??obj["icon_url"])};
+                    if(!string.IsNullOrWhiteSpace(shortname) && !shortname.Contains(' ') && shortname.Length<100)found[shortname]=new RustItem{Shortname=shortname,Name=name,IconUrl=S(obj["iconUrl"]??obj["IconUrl"]??obj["icon_url"]),Category=CategoryFor(shortname,S(obj["category"]??obj["Category"],"Uncategorized"))};
                     foreach(var property in obj)if(property.Value is JsonArray || property.Value is JsonObject)Walk(property.Value);
                 }
             }
@@ -251,7 +302,13 @@ public partial class MainWindow : Window
             }
             else
             {
-                await CheckForUpdatesAsync(false);
+                string bundled = Path.Combine(AppContext.BaseDirectory, "admin-item-list-public.json");
+                if (File.Exists(bundled))
+                {
+                    ApplyCatalog(ParseCatalog(await File.ReadAllTextAsync(bundled)));
+                    StatusLabel.Text = $"Loaded {catalog.Count} bundled Rust items (offline). Use Check new items to update.";
+                }
+                else await CheckForUpdatesAsync(false);
             }
         }
         catch (Exception ex) { StatusLabel.Text = $"Catalog unavailable: {ex.Message}. Using offline items."; }
@@ -298,7 +355,7 @@ public partial class MainWindow : Window
         Uri.TryCreate(input, UriKind.Absolute, out var url) && url.Scheme == Uri.UriSchemeHttps &&
         (url.Host.Equals("cdn.rusthelp.com", StringComparison.OrdinalIgnoreCase) || url.Host.Equals("rusthelp.com", StringComparison.OrdinalIgnoreCase));
 
-    private static List<RustItem> ParseCatalog(string json)
+    private List<RustItem> ParseCatalog(string json)
     {
         using var doc = JsonDocument.Parse(json);
         if (doc.RootElement.ValueKind != JsonValueKind.Array) throw new Exception("Expected RustHelp item array.");
@@ -310,7 +367,7 @@ public partial class MainWindow : Window
             var shortname = Field(entry, "shortName");
             if (string.IsNullOrWhiteSpace(shortname)) continue;
             var display = Field(entry, "displayName");
-            found[shortname] = new RustItem { Shortname = shortname, Name = string.IsNullOrWhiteSpace(display) ? shortname : display, IconUrl = Field(entry, "iconUrl") };
+            found[shortname] = new RustItem { Shortname = shortname, Name = string.IsNullOrWhiteSpace(display) ? shortname : display, IconUrl = Field(entry, "iconUrl"), Category = CategoryFor(shortname, Field(entry, "category")) };
         }
         return found.Values.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
     }
@@ -323,6 +380,7 @@ public partial class MainWindow : Window
             catalog[item.Shortname] = item;
             items.Add(item);
         }
+        foreach (var legend in legendaryCatalog.Values.OrderBy(i => i.Name)) items.Add(legend);
         foreach (var prize in prizes) AttachPrizeIcon(prize);
         RefreshFilters();
         _ = LoadIconsAsync(incoming.ToList());
@@ -330,7 +388,20 @@ public partial class MainWindow : Window
 
     private void AttachPrizeIcon(Prize prize)
     {
-        if (catalog.TryGetValue(prize.Shortname, out var item))
+        if (!string.IsNullOrWhiteSpace(prize.LegendaryId))
+        {
+            if (legendaryCatalog.TryGetValue(prize.LegendaryId, out var legendary))
+            {
+                prize.DisplayName = "★ " + legendary.Name;
+                prize.Icon = legendary.Icon ?? (catalog.TryGetValue(prize.Shortname, out var baseIcon) ? baseIcon.Icon : null);
+            }
+            else
+            {
+                prize.DisplayName = "★ " + prize.LegendaryId + " (refresh LegendaryItems)";
+                prize.Icon = catalog.TryGetValue(prize.Shortname, out var baseIcon) ? baseIcon.Icon : null;
+            }
+        }
+        else if (catalog.TryGetValue(prize.Shortname, out var item))
         {
             prize.DisplayName = item.Name;
             prize.Icon = item.Icon;
@@ -340,6 +411,52 @@ public partial class MainWindow : Window
             prize.DisplayName = prize.Shortname;
             prize.Icon = null;
         }
+    }
+
+    private void LoadLegendary_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Filter = "LegendaryItems config (*.json)|*.json", FileName = "LegendaryItems.json" };
+        if (dialog.ShowDialog(this) != true) return;
+        try
+        {
+            var document = JsonNode.Parse(File.ReadAllText(dialog.FileName)) as JsonObject ?? throw new Exception("Expected LegendaryItems object.");
+            var definitions = document["Weapons"] as JsonObject ?? throw new Exception("LegendaryItems configuration has no Weapons dictionary.");
+            var result = new Dictionary<string, RustItem>(StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in definitions)
+            {
+                if (pair.Value is not JsonObject definition) continue;
+                if (!S(definition["Enabled"], "true").Equals("true", StringComparison.OrdinalIgnoreCase)) continue;
+                string baseShortname = S(definition["Base weapon shortname"]);
+                if (string.IsNullOrWhiteSpace(baseShortname)) continue;
+                string id = pair.Key;
+                result[id] = new RustItem
+                {
+                    LegendaryId = id, BaseShortname = baseShortname,
+                    Shortname = "legendary:" + id,
+                    Name = S(definition["Display name"], id) + " (" + S(definition["Item type (Weapon, Backpack, Clothing)"], "Weapon") + ")",
+                    Category = S(definition["Item type (Weapon, Backpack, Clothing)"], "Weapon").Trim().ToLowerInvariant() switch
+                    {
+                        "backpack" => "Legendary Backpacks",
+                        "clothing" => "Legendary Clothing",
+                        _ => "Legendary Weapons"
+                    },
+                    Skin = S(definition["Skin ID"], "0")
+                };
+            }
+            legendaryCatalog.Clear();
+            foreach (var pair in result) legendaryCatalog[pair.Key] = pair.Value;
+            // Keep the RustHelp catalog and cached icon images when importing legendary definitions.
+            foreach (var item in items.Where(x => !string.IsNullOrEmpty(x.LegendaryId)).ToList()) items.Remove(item);
+            foreach (var item in legendaryCatalog.Values.OrderBy(x => x.Name))
+            {
+                if (catalog.TryGetValue(item.BaseShortname, out var normal)) item.Icon = normal.Icon;
+                items.Add(item);
+            }
+            foreach (var prize in prizes) AttachPrizeIcon(prize);
+            RefreshFilters();
+            StatusLabel.Text = $"Imported {legendaryCatalog.Count} enabled LegendaryItems. Existing prizes unchanged.";
+        }
+        catch (Exception ex) { MessageBox.Show(ex.Message, "LegendaryItems import failed", MessageBoxButton.OK, MessageBoxImage.Warning); }
     }
 
     private async Task LoadIconsAsync(List<RustItem> entries)
@@ -391,7 +508,8 @@ public partial class MainWindow : Window
             {
                 if (!catalog.TryGetValue(item.Shortname, out var current) || !ReferenceEquals(current, item)) return;
                 item.Icon = image;
-                foreach (var prize in prizes.Where(p => p.Shortname.Equals(item.Shortname, StringComparison.OrdinalIgnoreCase))) prize.Icon = image;
+                foreach (var legend in legendaryCatalog.Values.Where(x => x.BaseShortname.Equals(item.Shortname, StringComparison.OrdinalIgnoreCase))) legend.Icon = image;
+                foreach (var prize in prizes.Where(p => p.Shortname.Equals(item.Shortname, StringComparison.OrdinalIgnoreCase))) AttachPrizeIcon(prize);
             });
         }
         catch { /* A failed download never overwrites a working cache; retry on next check. */ }

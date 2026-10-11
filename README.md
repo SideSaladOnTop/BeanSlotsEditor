@@ -56,3 +56,7 @@ A live internet connection is required on the first launch to retrieve the full 
 
 ## Version 1.4 — prize display names
 The selected-prizes grid now shows the RustHelp friendly item name alongside the editable shortname. Search matches both values. Export continues to use only the shortname so the BeanSlots plugin config stays compatible.
+
+
+## LegendaryItems prizes
+Click **Refresh LegendaryItems** and select your `oxide/config/LegendaryItems.json`. Enabled weapons, wearables and backpacks appear alongside Rust items with their real base-item icons (when cached). Select legendary entries and click **Add selected items**. A prize stores both `Shortname` and `LegendaryId`, where `LegendaryId` controls real legendary creation via `LegendaryItems.API_CreateItem`. Re-import the LegendaryItems config when adding/changing definitions, and then save BeanSlots.json. Missing definitions are not silently replaced or removed. Existing BeanSlots prizes retain their fields. The editor imports the definitions locally; it does not contact the server automatically.

@@ -8,4 +8,8 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AssemblyName>BeanSlotsEditor</AssemblyName>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="categories.json" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="admin-item-list-public.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>
