@@ -57,6 +57,46 @@ A live internet connection is required on the first launch to retrieve the full 
 ## Version 1.4 — prize display names
 The selected-prizes grid now shows the RustHelp friendly item name alongside the editable shortname. Search matches both values. Export continues to use only the shortname so the BeanSlots plugin config stays compatible.
 
+## Version 1.5 — probability guidance and recent config
 
-## LegendaryItems prizes
-Click **Refresh LegendaryItems** and select your `oxide/config/LegendaryItems.json`. Enabled weapons, wearables and backpacks appear alongside Rust items with their real base-item icons (when cached). Select legendary entries and click **Add selected items**. A prize stores both `Shortname` and `LegendaryId`, where `LegendaryId` controls real legendary creation via `LegendaryItems.API_CreateItem`. Re-import the LegendaryItems config when adding/changing definitions, and then save BeanSlots.json. Missing definitions are not silently replaced or removed. Existing BeanSlots prizes retain their fields. The editor imports the definitions locally; it does not contact the server automatically.
+- **App-only max winning chance** (default 65%, adjustable 0–100%) is saved to `%LOCALAPPDATA%\BeanSlotsEditor\editor-settings.json`. It is NOT added to the Rust server's `BeanSlots.json`.
+- Winning odds and losing odds update live; the editor shows warnings and actionable suggestions when the total is above the chosen maximum.
+- **Scale chances to max** proportionally adjusts all prize chances while preserving relative rarity. **Distribute evenly** sets equal chances, totaling the maximum. Both actions change the current editor document and must be explicitly saved to write the server config.
+- Saving rejects odds above the app-only maximum. The actual Rust plugin's supported total remains at or below 100%.
+- Automatically reopens the last successfully opened/saved config at startup, if its path exists. If missing or unreadable, shows a status message and keeps the default document open.
+- Prize objects retain extra JSON fields including `LegendaryId` (as well as any other custom fields) across load, duplication and save.
+
+## Legendary prize labels (v1.7)
+
+The Selected Prizes item-name column displays the legendary name when `LegendaryId` is set (for example, `hellfire_ak` displays **Hellfire AK**), rather than reverting to RustHelp’s base item name after the catalog loads. If a prize supplies `LegendaryName`, that explicit value takes priority. Rust shortnames, icons, and all extra prize JSON fields are preserved. No new fields are exported automatically.
+
+## v1.8 — Legendary rarity tiers and editable suggestion weights
+
+Prizes support Unknown, Common, Uncommon, Rare, Very Rare, Legendary Common,
+Legendary Uncommon, Legendary Rare, and Legendary Very Rare.
+Existing stored `Legendary` assignments migrate to `Legendary Common`; new prizes
+with a `LegendaryId` default to `Legendary Common`. All other new prizes default to
+`Unknown`.
+
+The **Rarity Weights (app only)** tab lets you edit the relative weighting for
+all nine rarity tiers. Save weights, then click **Apply rarity suggestions** on
+the prizes tab to distribute the app maximum winning chance among prizes. Weights
+of zero exclude a rarity from suggestions. Applying suggestions requires confirmation;
+changing weights alone does not change any prize probabilities.
+
+Weights and rarity selections are persisted in
+`%LOCALAPPDATA%\BeanSlotsEditor\editor-settings.json`, never in the server
+`BeanSlots.json`. Additional per-prize server fields such as `LegendaryId` are
+preserved. Full WPF compilation has not been tested in this environment.
+
+## Reel animation mode
+
+Under **Economics & spins**, select **Simultaneous** (original animation) or **Sequential** (left, middle, right stop). The editor writes `AnimationMode` to BeanSlots.json. It defaults to Simultaneous in older configs.
+
+
+## v2.1 category and LegendaryItems catalog import
+
+- The Category filter uses `admin-item-list-public.json` base categories and `categories.json` assignment overrides, even when a stale RustHelp cache exists. Only nonempty categories are shown.
+- Press **Import LegendaryItems Config** in the Prize editor and select your `LegendaryItems.json`. Every enabled definition with a base shortname becomes a separate catalog entry under Legendary Weapons, Legendary Clothing, or Legendary Backpacks. The imported definitions are remembered in `%LOCALAPPDATA%/BeanSlotsEditor/legendary-items-import.json`.
+- Selecting a Legendary entry adds the proper `LegendaryId`, `LegendaryName`, base Rust shortname, and skin to the BeanSlots prize JSON. This is only catalog import; it does not replace the live LegendaryItems plugin configuration.
+- Each Legendary definition can be selected independently from the standard Rust item even when sharing a shortname.
