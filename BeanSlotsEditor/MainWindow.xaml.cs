@@ -266,10 +266,14 @@ public partial class MainWindow : Window
         StartingSpins.Text = S(root["StartingSpins"], "5"); MaxSpins.Text = S(root["MaxSpinsPerClick"], "10"); Frames.Text = S(root["AnimationFrames"], "18"); FrameInterval.Text = S(root["AnimationIntervalSeconds"], "0.14"); AnimationMode.SelectedIndex = S(root["AnimationMode"], "Simultaneous").Equals("Sequential", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         var pity = Obj(root,"ServerWidePity");
         PityEnabled.IsChecked = S(pity["Enabled"], "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        JackpotEnabled.IsChecked = S(pity["JackpotEnabled"], S(pity["Enabled"], "false")).Equals("true", StringComparison.OrdinalIgnoreCase);
         PityPerLoss.Text = S(pity["WinChanceIncreasePerLoss"], "0.05");
         PityMaxBonus.Text = S(pity["MaximumAdditionalWinChance"], "5");
-        JackpotPerLoss.Text = S(pity["JackpotWeightIncreasePerLoss"], "0.02");
-        JackpotMaxMultiplier.Text = S(pity["MaximumJackpotWeightMultiplier"], "2");
+        JackpotBaseChance.Text = S(pity["JackpotBaseChance"], "0.05");
+        JackpotPerSpin.Text = S(pity["JackpotChanceIncreasePerSpin"], "0.01");
+        JackpotMaxChance.Text = S(pity["MaximumJackpotChance"], "5");
+        ShowLossStreak.IsChecked = S(pity["ShowLossStreak"], "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        ShowJackpotChance.IsChecked = S(pity["ShowJackpotChance"], "false").Equals("true", StringComparison.OrdinalIgnoreCase);
         PityResetAnyWin.IsChecked = S(pity["ResetStreakOnAnyWin"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
         SpinsPerPurchase.Text = S(root["SpinsPerPurchase"], "5"); PurchaseCost.Text = S(root["PurchaseCost"], "100"); EconomicsEnabled.IsChecked = S(root["EconomicsPurchaseEnabled"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
         var raid = Obj(root, "RaidSpins"); Easy.Text = S(raid["Easy"], "1"); Medium.Text = S(raid["Medium"], "2"); Hard.Text = S(raid["Hard"], "3"); Expert.Text = S(raid["Expert"], "5"); Nightmare.Text = S(raid["Nightmare"], "8"); RewardAllRaiders.IsChecked = S(root["RewardAllRaiders"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -286,10 +290,16 @@ public partial class MainWindow : Window
             root["StartingSpins"] = Int(StartingSpins,0,1000000); root["MaxSpinsPerClick"] = Int(MaxSpins,1,100); root["AnimationFrames"] = Int(Frames,6,50); root["AnimationIntervalSeconds"] = Double(FrameInterval,.06,.8); root["AnimationMode"] = AnimationMode.SelectedIndex == 1 ? "Sequential" : "Simultaneous";
             var pity = Obj(root,"ServerWidePity");
             pity["Enabled"] = PityEnabled.IsChecked == true;
+            pity["JackpotEnabled"] = JackpotEnabled.IsChecked == true;
             pity["WinChanceIncreasePerLoss"] = Double(PityPerLoss,0,5);
             pity["MaximumAdditionalWinChance"] = Double(PityMaxBonus,0,50);
-            pity["JackpotWeightIncreasePerLoss"] = Double(JackpotPerLoss,0,2);
-            pity["MaximumJackpotWeightMultiplier"] = Double(JackpotMaxMultiplier,1,100);
+            pity.Remove("JackpotWeightIncreasePerLoss");
+            pity.Remove("MaximumJackpotWeightMultiplier");
+            pity["JackpotBaseChance"] = Double(JackpotBaseChance,0,100);
+            pity["JackpotChanceIncreasePerSpin"] = Double(JackpotPerSpin,0,10);
+            pity["MaximumJackpotChance"] = Double(JackpotMaxChance,0,100);
+            pity["ShowLossStreak"] = ShowLossStreak.IsChecked == true;
+            pity["ShowJackpotChance"] = ShowJackpotChance.IsChecked == true;
             pity["ResetStreakOnAnyWin"] = PityResetAnyWin.IsChecked == true;
             root["SpinsPerPurchase"] = Int(SpinsPerPurchase,1,1000000); root["PurchaseCost"] = Double(PurchaseCost,0,1000000000); root["EconomicsPurchaseEnabled"] = EconomicsEnabled.IsChecked == true;
             var raid = Obj(root,"RaidSpins"); raid["Easy"] = Int(Easy,0,1000000); raid["Medium"] = Int(Medium,0,1000000); raid["Hard"] = Int(Hard,0,1000000); raid["Expert"] = Int(Expert,0,1000000); raid["Nightmare"] = Int(Nightmare,0,1000000); root["RewardAllRaiders"] = RewardAllRaiders.IsChecked == true;
@@ -302,7 +312,7 @@ public partial class MainWindow : Window
                 var entry = (JsonObject)p.ExtraFields.DeepClone();
                 entry["Shortname"] = p.Shortname.Trim(); entry["Amount"] = p.Amount; entry["Chance"] = p.Chance; entry["Jackpot"] = p.Jackpot; entry["Skin"] = skin; list.Add(entry);
             }
-            if (prizes.Sum(p=>p.Chance) > maxWinningChance + 0.000001) throw new Exception($"Total chance exceeds the app-only maximum ({maxWinningChance:0.###}%). Use a suggestion or adjust the probabilities before saving.");
+            if (prizes.Where(p => !p.Jackpot).Sum(p=>p.Chance) > maxWinningChance + 0.000001) throw new Exception($"Total chance exceeds the app-only maximum ({maxWinningChance:0.###}%). Use a suggestion or adjust the probabilities before saving.");
             root["Prizes"] = list;
             return true;
         }
@@ -379,23 +389,78 @@ public partial class MainWindow : Window
         };stack.Children.Add(apply);window.Content=stack;window.ShowDialog();
     }
     private void PrizesGrid_CellEditEnding(object sender,DataGridCellEditEndingEventArgs e) => Dispatcher.BeginInvoke(new Action(UpdateOdds));
+    private void PrizesGrid_CurrentCellChanged(object sender, EventArgs e) => Dispatcher.BeginInvoke(new Action(UpdateOdds));
     private void UpdateOdds()
     {
         if (OddsLabel == null || WinningChanceText == null || LosingChanceText == null || WinningChanceBar == null || ChanceWarningText == null) return;
-        var total = prizes.Sum(p => p.Chance);
+        var total = prizes.Where(p => !p.Jackpot).Sum(p => p.Chance);
         var invalid = prizes.Any(p => double.IsNaN(p.Chance) || double.IsInfinity(p.Chance) || p.Chance < 0 || p.Chance > 100);
         var overLimit = total > maxWinningChance + 0.000001;
         var losing = Math.Max(0, 100 - total);
         WinningChanceText.Text = $"{total:0.###}%";
         LosingChanceText.Text = $"{losing:0.###}%";
         WinningChanceBar.Value = double.IsFinite(total) ? Math.Clamp(total, 0, 100) : 0;
-        OddsLabel.Text = $"{prizes.Count} prizes   |   Win: {total:0.###}%   |   Lose: {losing:0.###}%";
+        OddsLabel.Text = $"{prizes.Count(p=>!p.Jackpot)} normal + {prizes.Count(p=>p.Jackpot)} jackpots   |   Base normal win: {total:0.###}%";
         OddsLabel.Foreground = overLimit || invalid ? System.Windows.Media.Brushes.OrangeRed : System.Windows.Media.Brushes.LightGreen;
         ChanceWarningText.Visibility = overLimit || invalid ? Visibility.Visible : Visibility.Collapsed;
         ChanceWarningText.Text = invalid ? "Invalid prize chances: enter a value from 0 to 100 for each prize." :
             overLimit ? $"Total is {total - maxWinningChance:0.###}% over your app-only maximum of {maxWinningChance:0.###}%. Choose a suggested adjustment." : "";
         if (MaxWinChanceText != null) MaxWinChanceText.Text = $"Editor maximum: {maxWinningChance:0.###}%";
         if (ProbabilitySuggestionText != null) ProbabilitySuggestionText.Text = GetProbabilitySuggestion(total);
+        UpdateJackpotPreview();
+        UpdatePityPreview();
+    }
+    public sealed class JackpotPreviewRow
+    {
+        public string Name { get; set; } = "";
+        public string Weight { get; set; } = "";
+        public string Probability { get; set; } = "";
+    }
+    private static double PreviewNumber(TextBox? box, double fallback)
+    {
+        if (box == null || !double.TryParse(box.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ||
+            !double.IsFinite(value)) return fallback;
+        return Math.Max(0, value);
+    }
+    private void PreviewSettingChanged(object sender, RoutedEventArgs e) { UpdateJackpotPreview(); UpdatePityPreview(); }
+    private void PreviewTextChanged(object sender, TextChangedEventArgs e) { UpdateJackpotPreview(); UpdatePityPreview(); }
+    private void JackpotPreviewSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdateJackpotPreview();
+    private void PityPreviewSlider_Changed(object sender, RoutedPropertyChangedEventArgs<double> e) => UpdatePityPreview();
+    private void RefreshJackpotPreview_Click(object sender, RoutedEventArgs e)
+    {
+        PrizesGrid.CommitEdit(DataGridEditingUnit.Cell, true);
+        PrizesGrid.CommitEdit(DataGridEditingUnit.Row, true);
+        UpdateOdds();
+    }
+    private void UpdatePityPreview()
+    {
+        if (PityPreviewSlider == null || PityPreviewText == null || PityPerLoss == null || PityMaxBonus == null) return;
+        double losses = PityPreviewSlider.Value;
+        double ordinary = Math.Clamp(prizes.Where(p => !p.Jackpot && p.Chance > 0 && double.IsFinite(p.Chance)).Sum(p => p.Chance), 0, 100);
+        double bonus = PityEnabled?.IsChecked == true ? Math.Min(PreviewNumber(PityMaxBonus, 5), losses * PreviewNumber(PityPerLoss, .05)) : 0;
+        double win = Math.Min(100, ordinary + bonus);
+        PityPreviewText.Text = $"{losses:0} consecutive losses  |  Normal win: {win:0.####}%  |  " +
+            $"Base: {ordinary:0.####}% + pity bonus: {bonus:0.####} points  |  Loss: {100-win:0.####}% (if no jackpot)";
+    }
+    private void UpdateJackpotPreview()
+    {
+        if (JackpotPreviewSlider == null || JackpotPreviewGrid == null || JackpotPreviewText == null || JackpotBaseChance == null) return;
+        var jackpotPrizes = prizes.Where(p => p.Jackpot).ToList();
+        var eligibleJackpots = jackpotPrizes.Where(p => p.Chance > 0 && double.IsFinite(p.Chance)).ToList();
+        var ordinaryTotal = Math.Clamp(prizes.Where(p => !p.Jackpot && double.IsFinite(p.Chance) && p.Chance > 0).Sum(p => p.Chance), 0, 100);
+        double streak = JackpotPreviewSlider.Value;
+        double chance = JackpotEnabled?.IsChecked == true && eligibleJackpots.Count > 0
+            ? Math.Min(100, Math.Min(PreviewNumber(JackpotMaxChance, 5),
+                PreviewNumber(JackpotBaseChance, .05) + streak * PreviewNumber(JackpotPerSpin, .01))) : 0;
+        var totalWeight = eligibleJackpots.Sum(p => p.Chance);
+        JackpotPreviewGrid.ItemsSource = jackpotPrizes.Select(p => new JackpotPreviewRow
+        {
+            Name = p.DisplayName.Length > 0 ? p.DisplayName : p.Shortname,
+            Weight = p.Chance.ToString("0.###", CultureInfo.InvariantCulture),
+            Probability = (totalWeight > 0 && p.Chance > 0 && double.IsFinite(p.Chance) ? chance * p.Chance / totalWeight : 0).ToString("0.####", CultureInfo.InvariantCulture) + "%"
+        }).ToList();
+        JackpotPreviewText.Text = $"{streak:0} spins without a jackpot  |  Jackpot: {chance:0.####}% per spin  |  " +
+            $"Ordinary win after a failed jackpot roll: {ordinaryTotal:0.###}% base (plus ordinary-loss pity)  |  {jackpotPrizes.Count} marked jackpots, {eligibleJackpots.Count} eligible";
     }
     private sealed class EditorPreferences
     {
@@ -500,12 +565,18 @@ public partial class MainWindow : Window
     }
     private double[] RarityChances()
     {
-        var weights = prizes.Select(p => RarityWeight(p.Rarity)).ToArray();
+        // Jackpot weights are independent of the ordinary percentage budget.
+        var normal = prizes.Where(p => !p.Jackpot).ToList();
+        var weights = normal.Select(p => RarityWeight(p.Rarity)).ToArray();
         var sum = weights.Sum();
-        if (sum <= 0) return new double[weights.Length];
+        var result = new double[prizes.Count];
+        if (sum <= 0) return result;
         var chances = weights.Select(w => Math.Floor(maxWinningChance * w / sum * 1000000) / 1000000).ToArray();
         if (chances.Length > 0) chances[0] += Math.Round(maxWinningChance - chances.Sum(), 6);
-        return chances;
+        for (int i = 0, j = 0; i < prizes.Count; i++)
+            if (!prizes[i].Jackpot) result[i] = chances[j++];
+            else result[i] = prizes[i].Chance;
+        return result;
     }
     private void ApplyRaritySuggestions_Click(object sender, RoutedEventArgs e)
     {
@@ -520,7 +591,7 @@ public partial class MainWindow : Window
             MessageBox.Show("Set at least one positive weight for a rarity used by your prizes.", "No eligible weights");
             return;
         }
-        if (MessageBox.Show($"Redistribute all {prizes.Count} prize chances based on their rarities, up to {maxWinningChance:0.###}%? Existing individual percentages will be replaced.",
+        if (MessageBox.Show($"Redistribute ordinary prize chances based on their rarities, up to {maxWinningChance:0.###}%? Jackpot item weights remain unchanged.",
             "Apply rarity suggestions", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
         var suggestions = RarityChances();
         for (int i = 0; i < prizes.Count; i++) prizes[i].Chance = suggestions[i];
@@ -532,30 +603,32 @@ public partial class MainWindow : Window
         if (prizes.Any(p => !double.IsFinite(p.Chance) || p.Chance < 0 || p.Chance > 100)) return "Correct invalid individual prize odds first.";
         if (total > maxWinningChance + 0.000001)
             return $"Over maximum by {total - maxWinningChance:0.###} points. Apply rarity-weighted suggestions, or scale existing odds. Edit the rarity weights in the Rarity Weights tab.";
-        if (total == 0) return "No prizes can currently win. Apply rarity suggestions to assign weighted odds, or enter percentages manually.";
+        if (total == 0) return "No ordinary prizes can currently win. Jackpot prizes require the separate jackpot buildup to be enabled.";
         var proposal = RarityChances();
         var legCount = prizes.Count(p => RarityLabel(p.Rarity).StartsWith("Legendary", StringComparison.Ordinal));
         var legendaryTotal = prizes.Select((p, i) => (p, i)).Where(x => RarityLabel(x.p.Rarity).StartsWith("Legendary", StringComparison.Ordinal)).Sum(x => proposal[x.i]);
-        return $"Within your {maxWinningChance:0.###}% max; {maxWinningChance - total:0.###} points remain. Rarity suggestion: {legCount} Legendary prizes share {legendaryTotal:0.###}% of spins. Click Apply to use weighted odds.";
+        return $"Ordinary pool has {maxWinningChance - total:0.###} points left before the editor limit. {prizes.Count(p => p.Jackpot)} jackpot item(s) excluded from normal rolls; their Chance fields are relative jackpot weights.";
     }
     private void ScaleProbabilities_Click(object sender, RoutedEventArgs e)
     {
-        var total = prizes.Sum(p => p.Chance);
+        var total = prizes.Where(p => !p.Jackpot).Sum(p => p.Chance);
         if (prizes.Count == 0 || total <= 0 || !double.IsFinite(total)) { MessageBox.Show("Add positive prize chances before scaling."); return; }
         if (prizes.Any(p => !double.IsFinite(p.Chance) || p.Chance < 0 || p.Chance > 100)) { MessageBox.Show("Fix invalid chances before scaling."); return; }
         var ratio = maxWinningChance / total;
-        foreach (var prize in prizes) prize.Chance = Math.Round(prize.Chance * ratio, 6);
+        foreach (var prize in prizes.Where(p => !p.Jackpot)) prize.Chance = Math.Round(prize.Chance * ratio, 6);
         // Correct rounding drift; never exceed the chosen cap.
-        var excess = prizes.Sum(p => p.Chance) - maxWinningChance;
-        if (excess > 0 && prizes.Count > 0) prizes[0].Chance = Math.Max(0, prizes[0].Chance - excess);
+        var excess = prizes.Where(p => !p.Jackpot).Sum(p => p.Chance) - maxWinningChance;
+        var firstOrdinary = prizes.FirstOrDefault(p => !p.Jackpot);
+        if (excess > 0 && firstOrdinary != null) firstOrdinary.Chance = Math.Max(0, firstOrdinary.Chance - excess);
         UpdateOdds();
     }
     private void DistributeProbabilities_Click(object sender, RoutedEventArgs e)
     {
-        if (prizes.Count == 0) return;
-        var per = Math.Floor(maxWinningChance / prizes.Count * 1000000) / 1000000;
-        foreach (var prize in prizes) prize.Chance = per;
-        prizes[0].Chance = Math.Round(prizes[0].Chance + (maxWinningChance - prizes.Sum(p => p.Chance)), 6);
+        var ordinary = prizes.Where(p => !p.Jackpot).ToList();
+        if (ordinary.Count == 0) return;
+        var per = Math.Floor(maxWinningChance / ordinary.Count * 1000000) / 1000000;
+        foreach (var prize in ordinary) prize.Chance = per;
+        ordinary[0].Chance = Math.Round(ordinary[0].Chance + (maxWinningChance - ordinary.Sum(p => p.Chance)), 6);
         UpdateOdds();
     }
     private void LoadSavedLegendaryCatalog()
