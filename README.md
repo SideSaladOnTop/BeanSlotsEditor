@@ -100,3 +100,16 @@ Under **Economics & spins**, select **Simultaneous** (original animation) or **S
 - Press **Import LegendaryItems Config** in the Prize editor and select your `LegendaryItems.json`. Every enabled definition with a base shortname becomes a separate catalog entry under Legendary Weapons, Legendary Clothing, or Legendary Backpacks. The imported definitions are remembered in `%LOCALAPPDATA%/BeanSlotsEditor/legendary-items-import.json`.
 - Selecting a Legendary entry adds the proper `LegendaryId`, `LegendaryName`, base Rust shortname, and skin to the BeanSlots prize JSON. This is only catalog import; it does not replace the live LegendaryItems plugin configuration.
 - Each Legendary definition can be selected independently from the standard Rust item even when sharing a shortname.
+
+## v2.2 — Server-wide pity / jackpot weighting
+- Each prize now has a **Jackpot** checkbox, written as `"Jackpot": true` in `BeanSlots.json`.
+- Under **Economics & spins**, enable server-wide loss-streak odds boosts and adjust:
+  - `ServerWidePity.Enabled` (default false)
+  - `WinChanceIncreasePerLoss` (percentage points, default 0.05)
+  - `MaximumAdditionalWinChance` (percentage points, default 5)
+  - `JackpotWeightIncreasePerLoss` (relative weight per loss, default 0.02)
+  - `MaximumJackpotWeightMultiplier` (default 2)
+  - `ResetStreakOnAnyWin` (default true)
+- `BeanSlots v1.1.19` reads these options. The streak persists in the server plugin data, not the config.
+- Only genuine normal spin outcomes change the loss streak. Admin forced-win tests are excluded.
+- Winning probability is capped at 100%; jackpot weight only redistributes winning prize selection. Prize entries with zero baseline chance never win.

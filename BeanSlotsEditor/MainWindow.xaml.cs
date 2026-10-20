@@ -41,6 +41,8 @@ public partial class MainWindow : Window
         private PrizeRarity rarity = PrizeRarity.Unknown;
         public PrizeRarity Rarity { get => rarity; set { rarity = value; Changed(nameof(Rarity)); Changed(nameof(RarityDisplay)); } }
         public string RarityDisplay => RarityLabel(rarity);
+        private bool jackpot;
+        public bool Jackpot { get => jackpot; set { jackpot = value; Changed(nameof(Jackpot)); } }
         public string RarityKey => Shortname.Trim().ToLowerInvariant() + "|" + Skin + "|" + (ExtraFields["LegendaryId"]?.ToString() ?? "") + "|" + Amount;
 
         private string shortname = "scrap"; private int amount = 1; private double chance = 1; private string skin = "0";
@@ -262,6 +264,13 @@ public partial class MainWindow : Window
     private void LoadFields()
     {
         StartingSpins.Text = S(root["StartingSpins"], "5"); MaxSpins.Text = S(root["MaxSpinsPerClick"], "10"); Frames.Text = S(root["AnimationFrames"], "18"); FrameInterval.Text = S(root["AnimationIntervalSeconds"], "0.14"); AnimationMode.SelectedIndex = S(root["AnimationMode"], "Simultaneous").Equals("Sequential", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
+        var pity = Obj(root,"ServerWidePity");
+        PityEnabled.IsChecked = S(pity["Enabled"], "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        PityPerLoss.Text = S(pity["WinChanceIncreasePerLoss"], "0.05");
+        PityMaxBonus.Text = S(pity["MaximumAdditionalWinChance"], "5");
+        JackpotPerLoss.Text = S(pity["JackpotWeightIncreasePerLoss"], "0.02");
+        JackpotMaxMultiplier.Text = S(pity["MaximumJackpotWeightMultiplier"], "2");
+        PityResetAnyWin.IsChecked = S(pity["ResetStreakOnAnyWin"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
         SpinsPerPurchase.Text = S(root["SpinsPerPurchase"], "5"); PurchaseCost.Text = S(root["PurchaseCost"], "100"); EconomicsEnabled.IsChecked = S(root["EconomicsPurchaseEnabled"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
         var raid = Obj(root, "RaidSpins"); Easy.Text = S(raid["Easy"], "1"); Medium.Text = S(raid["Medium"], "2"); Hard.Text = S(raid["Hard"], "3"); Expert.Text = S(raid["Expert"], "5"); Nightmare.Text = S(raid["Nightmare"], "8"); RewardAllRaiders.IsChecked = S(root["RewardAllRaiders"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
         var o = Obj(root, "OverlayButton"); OverlayEnabled.IsChecked = S(o["Enabled"], "true").Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -275,6 +284,13 @@ public partial class MainWindow : Window
             int Int(TextBox t, int min, int max) { if (!int.TryParse(t.Text, out var v) || v < min || v > max) throw new Exception($"Invalid number in {t.Name}: {t.Text}"); return v; }
             double Double(TextBox t, double min, double max) { if (!double.TryParse(t.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) || double.IsNaN(v) || v < min || v > max) throw new Exception($"Invalid number in {t.Name}: {t.Text} (use decimal point)"); return v; }
             root["StartingSpins"] = Int(StartingSpins,0,1000000); root["MaxSpinsPerClick"] = Int(MaxSpins,1,100); root["AnimationFrames"] = Int(Frames,6,50); root["AnimationIntervalSeconds"] = Double(FrameInterval,.06,.8); root["AnimationMode"] = AnimationMode.SelectedIndex == 1 ? "Sequential" : "Simultaneous";
+            var pity = Obj(root,"ServerWidePity");
+            pity["Enabled"] = PityEnabled.IsChecked == true;
+            pity["WinChanceIncreasePerLoss"] = Double(PityPerLoss,0,5);
+            pity["MaximumAdditionalWinChance"] = Double(PityMaxBonus,0,50);
+            pity["JackpotWeightIncreasePerLoss"] = Double(JackpotPerLoss,0,2);
+            pity["MaximumJackpotWeightMultiplier"] = Double(JackpotMaxMultiplier,1,100);
+            pity["ResetStreakOnAnyWin"] = PityResetAnyWin.IsChecked == true;
             root["SpinsPerPurchase"] = Int(SpinsPerPurchase,1,1000000); root["PurchaseCost"] = Double(PurchaseCost,0,1000000000); root["EconomicsPurchaseEnabled"] = EconomicsEnabled.IsChecked == true;
             var raid = Obj(root,"RaidSpins"); raid["Easy"] = Int(Easy,0,1000000); raid["Medium"] = Int(Medium,0,1000000); raid["Hard"] = Int(Hard,0,1000000); raid["Expert"] = Int(Expert,0,1000000); raid["Nightmare"] = Int(Nightmare,0,1000000); root["RewardAllRaiders"] = RewardAllRaiders.IsChecked == true;
             var o = Obj(root,"OverlayButton"); o["Enabled"] = OverlayEnabled.IsChecked == true; o["Left"] = Double(OverlayLeft,0,1); o["Bottom"] = Double(OverlayBottom,0,1); o["Width"] = Double(OverlayWidth,.005,1); o["Height"] = Double(OverlayHeight,.005,1); if (double.Parse(OverlayLeft.Text,CultureInfo.InvariantCulture)+double.Parse(OverlayWidth.Text,CultureInfo.InvariantCulture)>1 || double.Parse(OverlayBottom.Text,CultureInfo.InvariantCulture)+double.Parse(OverlayHeight.Text,CultureInfo.InvariantCulture)>1) throw new Exception("Overlay extends beyond screen bounds.");
@@ -284,7 +300,7 @@ public partial class MainWindow : Window
             {
                 if (string.IsNullOrWhiteSpace(p.Shortname) || p.Amount < 1 || p.Chance < 0 || p.Chance > 100 || double.IsNaN(p.Chance) || !ulong.TryParse(p.Skin, out var skin)) throw new Exception("Invalid prize: " + p.Shortname + ". Amount >= 1, chance 0–100, skin unsigned integer.");
                 var entry = (JsonObject)p.ExtraFields.DeepClone();
-                entry["Shortname"] = p.Shortname.Trim(); entry["Amount"] = p.Amount; entry["Chance"] = p.Chance; entry["Skin"] = skin; list.Add(entry);
+                entry["Shortname"] = p.Shortname.Trim(); entry["Amount"] = p.Amount; entry["Chance"] = p.Chance; entry["Jackpot"] = p.Jackpot; entry["Skin"] = skin; list.Add(entry);
             }
             if (prizes.Sum(p=>p.Chance) > maxWinningChance + 0.000001) throw new Exception($"Total chance exceeds the app-only maximum ({maxWinningChance:0.###}%). Use a suggestion or adjust the probabilities before saving.");
             root["Prizes"] = list;
@@ -297,7 +313,7 @@ public partial class MainWindow : Window
         var parsed = JsonNode.Parse(File.ReadAllText(file)) as JsonObject ?? throw new Exception("Expected JSON object at root.");
         loading = true; root = parsed; prizes.Clear();
         if(root["Prizes"] is JsonArray arr) foreach(var obj in arr.OfType<JsonObject>())
-        { AddPrize(new Prize { Shortname = S(obj["Shortname"]), Amount = int.TryParse(S(obj["Amount"]), out var amt) ? amt:1, Chance = double.TryParse(S(obj["Chance"]), NumberStyles.Float,CultureInfo.InvariantCulture,out var c)?c:0, Skin=S(obj["Skin"],"0"), ExtraFields=(JsonObject)obj.DeepClone(), Rarity=!string.IsNullOrWhiteSpace(S(obj["LegendaryId"])) ? PrizeRarity.LegendaryCommon : PrizeRarity.Unknown }); }
+        { AddPrize(new Prize { Shortname = S(obj["Shortname"]), Amount = int.TryParse(S(obj["Amount"]), out var amt) ? amt:1, Chance = double.TryParse(S(obj["Chance"]), NumberStyles.Float,CultureInfo.InvariantCulture,out var c)?c:0, Skin=S(obj["Skin"],"0"), Jackpot=S(obj["Jackpot"],"false").Equals("true",StringComparison.OrdinalIgnoreCase), ExtraFields=(JsonObject)obj.DeepClone(), Rarity=!string.IsNullOrWhiteSpace(S(obj["LegendaryId"])) ? PrizeRarity.LegendaryCommon : PrizeRarity.Unknown }); }
         LoadPrizeRarities(file);
         LoadFields(); path=file; PathLabel.Text=Path.GetFileName(file); dirty=false; loading=false; UpdateOdds(); SaveEditorPreferences(); StatusLabel.Text=$"Loaded {prizes.Count} prizes";
     }
@@ -343,7 +359,7 @@ public partial class MainWindow : Window
         RefreshFilters(); UpdateOdds();
     }
     private void Remove_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList()) prizes.Remove(p); }
-    private void Duplicate_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList())AddPrize(new Prize { Shortname=p.Shortname,Amount=p.Amount,Chance=p.Chance,Skin=p.Skin, ExtraFields=(JsonObject)p.ExtraFields.DeepClone(),Rarity=p.Rarity }); }
+    private void Duplicate_Click(object sender,RoutedEventArgs e) { foreach(var p in PrizesGrid.SelectedItems.Cast<Prize>().ToList())AddPrize(new Prize { Shortname=p.Shortname,Amount=p.Amount,Chance=p.Chance,Skin=p.Skin, Jackpot=p.Jackpot, ExtraFields=(JsonObject)p.ExtraFields.DeepClone(),Rarity=p.Rarity }); }
     private void Batch_Click(object sender,RoutedEventArgs e)
     {
         var chosen=PrizesGrid.SelectedItems.Cast<Prize>().ToList(); if(chosen.Count==0) { MessageBox.Show("Select prize rows first.");return; }
